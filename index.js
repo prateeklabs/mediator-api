@@ -124,8 +124,9 @@ app.post('/v1/chat/completions', async (req, res) => {
   }
 });
 
-// Start server
-app.listen(PORT, () => {
+// Start server — bind to 0.0.0.0 so it's reachable from other machines on the network
+const HOST = '0.0.0.0';
+app.listen(PORT, HOST, () => {
   console.log(`
 ╔══════════════════════════════════════════╗
 ║       Mediator API is running            ║
