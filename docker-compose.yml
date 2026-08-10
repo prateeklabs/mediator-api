@@ -3,8 +3,7 @@ services:
     build: .
     container_name: mediator-api
     restart: unless-stopped
-    ports:
-      - "3000:3000"
+    network_mode: host
     env_file:
       - .env
     healthcheck:
