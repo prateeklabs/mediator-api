@@ -28,7 +28,8 @@ app.get('/health', (_req, res) => {
 
 // Main chat completions endpoint (OpenAI-compatible)
 app.post('/v1/chat/completions', async (req, res) => {
-  const { messages, stream = true } = req.body;
+  const { messages } = req.body;
+  const stream = req.body.stream !== false; // default to true
 
   if (!messages || !Array.isArray(messages) || messages.length === 0) {
     return res.status(400).json({ error: 'Invalid request: "messages" array is required' });
@@ -46,6 +47,8 @@ app.post('/v1/chat/completions', async (req, res) => {
 
   console.log(`\n📨 Incoming request [${new Date().toISOString()}]`);
   console.log(`   Preview: ${userContent.slice(0, 100)}...`);
+  console.log(`   Tools supplied: ${!!req.body.tools}, count: ${req.body.tools?.length || 0}`);
+  console.log(`   Tool choice: ${req.body.tool_choice}`);
 
   // Step 1: Classify the request
   let classification;
@@ -75,7 +78,7 @@ app.post('/v1/chat/completions', async (req, res) => {
   }
 
   try {
-    const apiResponse = await forwardToApi(targetUrl, apiKey, model, messages, stream);
+    const apiResponse = await forwardToApi(targetUrl, apiKey, model, req.body);
 
     if (stream) {
       res.setHeader('Content-Type', 'text/event-stream');
@@ -95,7 +98,7 @@ app.post('/v1/chat/completions', async (req, res) => {
     if (classification.route === 'openrouter' && LOCAL_API_URL) {
       console.log(`   🔄 Falling back to local model...`);
       try {
-        const fallbackResponse = await forwardToApi(LOCAL_API_URL, LOCAL_API_KEY, LOCAL_MODEL, messages, stream);
+        const fallbackResponse = await forwardToApi(LOCAL_API_URL, LOCAL_API_KEY, LOCAL_MODEL, req.body);
 
         if (stream) {
           res.setHeader('Content-Type', 'text/event-stream');

@@ -1,11 +1,11 @@
 // Forward request to a target API and stream the response back
-async function forwardToApi(targetUrl, apiKey, model, messages, stream = true) {
+// Transparent proxy: preserves the full incoming request body, only overrides model
+async function forwardToApi(targetUrl, apiKey, model, requestBody) {
   const url = `${targetUrl}/chat/completions`;
 
   const body = {
-    model: model,
-    messages: messages,
-    stream: stream
+    ...requestBody,
+    model
   };
 
   const response = await fetch(url, {
