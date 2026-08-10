@@ -1,0 +1,21 @@
+{
+  "version": 1,
+  "recipe": {
+    "name": "Node.js app",
+    "kind": "node",
+    "bootstrap": [
+      "npm install"
+    ],
+    "build": [],
+    "test": [],
+    "start": "npm run dev",
+    "port": 3000,
+    "readinessPath": "/",
+    "evidence": [
+      "Detected package.json",
+      "Package manager: npm",
+      "Scripts: start, dev"
+    ]
+  },
+  "updatedAt": "2026-08-10T22:07:59.385669+00:00"
+}
