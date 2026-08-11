@@ -53,6 +53,7 @@ npm start
 | Env Variable | Default | Description |
 |---|---|---|
 | `PORT` | `3000` | Mediator server port |
+| `BODY_LIMIT` | `100mb` | Max request body size (long conversations + tool definitions can be large) |
 | `LOCAL_API_URL` | `http://localhost:1234/v1` | Local LLM API endpoint |
 | `LOCAL_API_KEY` | `lm-studio` | Local API auth key |
 | `LOCAL_MODEL` | `qwen/qwen3.6-27b` | Local model identifier |

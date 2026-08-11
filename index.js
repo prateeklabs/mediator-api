@@ -4,7 +4,7 @@ const { classifyRequest } = require('./classifier');
 const { forwardToApi, streamToSSE, passthroughJson } = require('./router');
 
 const app = express();
-app.use(express.json());
+app.use(express.json({ limit: process.env.BODY_LIMIT || '100mb' }));
 
 // Config from environment
 const PORT = process.env.PORT || 3000;
