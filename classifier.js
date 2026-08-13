@@ -41,11 +41,18 @@ Rules:
 async function classifyRequest(userMessage, localApiUrl, localApiKey, localModel) {
   const tasksConfig = loadTasks();
 
-  // Fast keyword-based pre-check
-  const keywordMatch = quickKeywordMatch(userMessage, tasksConfig);
-  const alwaysLocalMatch = quickAlwaysLocalMatch(userMessage, tasksConfig);
+  // 1. Explicit model request (e.g. "use grok") — highest priority, overrides everything
+  const explicitRequestMatch = quickExplicitModelRequest(userMessage, tasksConfig);
+  if (explicitRequestMatch) {
+    return {
+      route: 'openrouter',
+      reason: `explicit model request: ${explicitRequestMatch}`,
+      category: explicitRequestMatch
+    };
+  }
 
-  // If it matches always_local, force local regardless of other matches
+  // 2. always_local — force local for simple/technical tasks
+  const alwaysLocalMatch = quickAlwaysLocalMatch(userMessage, tasksConfig);
   if (alwaysLocalMatch) {
     return {
       route: 'local',
@@ -54,7 +61,8 @@ async function classifyRequest(userMessage, localApiUrl, localApiKey, localModel
     };
   }
 
-  // If it matches an openrouter category, route there
+  // 3. OpenRouter category keywords (complex reasoning, research, etc.)
+  const keywordMatch = quickKeywordMatch(userMessage, tasksConfig);
   if (keywordMatch) {
     return {
       route: 'openrouter',
@@ -69,6 +77,21 @@ async function classifyRequest(userMessage, localApiUrl, localApiKey, localModel
     reason: 'no complex task pattern matched',
     category: null
   };
+}
+
+// Fast keyword-based check for explicit model requests (e.g. "use grok")
+// Checked FIRST — user intent to use a stronger model always wins
+function quickExplicitModelRequest(userMessage, tasksConfig) {
+  const lower = userMessage.toLowerCase();
+  for (const category of tasksConfig.categories) {
+    if (category.name !== 'explicit_model_request') continue;
+    for (const keyword of category.keywords) {
+      if (lower.includes(keyword.toLowerCase())) {
+        return category.name;
+      }
+    }
+  }
+  return null;
 }
 
 // Fast keyword-based pre-check for openrouter categories

@@ -78,7 +78,8 @@ app.post('/v1/chat/completions', async (req, res) => {
   }
 
   try {
-    const apiResponse = await forwardToApi(targetUrl, apiKey, model, req.body);
+    const isLocal = classification.route === 'local';
+    const apiResponse = await forwardToApi(targetUrl, apiKey, model, req.body, isLocal);
 
     if (stream) {
       res.setHeader('Content-Type', 'text/event-stream');
@@ -92,13 +93,14 @@ app.post('/v1/chat/completions', async (req, res) => {
 
     console.log(`   ✅ Response sent`);
   } catch (err) {
-    console.error(`   ❌ Backend error: ${err.message}`);
+    const isTimeout = err.name === 'AbortError';
+    console.error(`   ❌ Backend error: ${isTimeout ? `TIMEOUT after ${process.env.FETCH_TIMEOUT_MS || 120000}ms` : err.message}`);
 
     // Attempt fallback: if OpenRouter failed, try local
     if (classification.route === 'openrouter' && LOCAL_API_URL) {
       console.log(`   🔄 Falling back to local model...`);
       try {
-        const fallbackResponse = await forwardToApi(LOCAL_API_URL, LOCAL_API_KEY, LOCAL_MODEL, req.body);
+        const fallbackResponse = await forwardToApi(LOCAL_API_URL, LOCAL_API_KEY, LOCAL_MODEL, req.body, true);
 
         if (stream) {
           res.setHeader('Content-Type', 'text/event-stream');
@@ -120,7 +122,7 @@ app.post('/v1/chat/completions', async (req, res) => {
     if (!res.headersSent) {
       res.status(502).json({
         error: 'Backend unavailable',
-        message: err.message,
+        message: isTimeout ? `Request timed out after ${process.env.FETCH_TIMEOUT_MS || 120000}ms` : err.message,
         routedTo: classification.route
       });
     }
