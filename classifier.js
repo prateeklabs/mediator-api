@@ -2,10 +2,10 @@ const fs = require('fs');
 const path = require('path');
 
 // Classifier mode: keyword | hybrid | llm
-// keyword = keyword matching only (fast, no LLM call)
+// keyword = keyword matching only (fast, no LLM call) - RECOMMENDED for CPU setups
 // hybrid  = keyword fast path + LLM fallback for ambiguous requests
 // llm     = always use LLM for classification
-const CLASSIFIER_MODE = process.env.CLASSIFIER_MODE || 'hybrid';
+const CLASSIFIER_MODE = process.env.CLASSIFIER_MODE || 'keyword';
 
 // Load task routing config
 function loadTasks() {
@@ -68,45 +68,48 @@ function sanitizeMessage(userMessage) {
 
 // Ask local LLM to classify an ambiguous request
 async function classifyWithLLM(userMessage, localApiUrl, localApiKey, localModel) {
-  const prompt = `Classify this user request. Should it be handled by a capable local model or routed to a stronger remote model?
+  // Keep prompt minimal — local model is on CPU, needs to be fast
+  const prompt = `Route this request: "${userMessage.slice(0, 300)}"
+Reply JSON only: {"route":"local","reason":"..."} or {"route":"openrouter","reason":"..."}
+Use openrouter for complex reasoning/research/creative writing/high-stakes. Use local for code/tech/simple.`;
 
-User request: ${userMessage}
+  // Short timeout for classification — don't block the main request
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), 30000); // 30s max
 
-Respond ONLY with JSON:
-{"route":"local" or "openrouter","reason":"brief explanation"}
+  try {
+    const response = await fetch(`${localApiUrl}/chat/completions`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${localApiKey}`
+      },
+      body: JSON.stringify({
+        model: localModel,
+        messages: [{ role: 'user', content: prompt }],
+        max_tokens: 128,
+        stream: false
+      }),
+      signal: controller.signal
+    });
 
-Use "openrouter" for: complex reasoning, research, creative writing, high-stakes tasks, or when the request seems to need more capability.
-Use "local" for: coding, debugging, technical tasks, simple questions, everyday tasks.
-Do NOT add any text outside the JSON object.`;
+    if (!response.ok) {
+      throw new Error(`LLM classification failed: HTTP ${response.status}`);
+    }
 
-  const response = await fetch(`${localApiUrl}/chat/completions`, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'Authorization': `Bearer ${localApiKey}`
-    },
-    body: JSON.stringify({
-      model: localModel,
-      messages: [{ role: 'user', content: prompt }],
-      max_tokens: 64,
-      stream: false
-    })
-  });
+    const data = await response.json();
+    const content = data.choices?.[0]?.message?.content || '{}';
 
-  if (!response.ok) {
-    throw new Error(`LLM classification failed: HTTP ${response.status}`);
+    // Extract JSON from response (handle markdown code blocks)
+    const jsonMatch = content.match(/\{[\s\S]*\}/);
+    if (!jsonMatch) {
+      throw new Error(`Invalid LLM classification response: ${content.slice(0, 100)}`);
+    }
+
+    return JSON.parse(jsonMatch[0]);
+  } finally {
+    clearTimeout(timeoutId);
   }
-
-  const data = await response.json();
-  const content = data.choices?.[0]?.message?.content || '{}';
-
-  // Extract JSON from response (handle markdown code blocks)
-  const jsonMatch = content.match(/\{[\s\S]*\}/);
-  if (!jsonMatch) {
-    throw new Error(`Invalid LLM classification response: ${content.slice(0, 100)}`);
-  }
-
-  return JSON.parse(jsonMatch[0]);
 }
 
 // Send classification request to local model with retry logic
