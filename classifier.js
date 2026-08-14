@@ -67,6 +67,7 @@ function sanitizeMessage(userMessage) {
 }
 
 // Ask local LLM to classify an ambiguous request
+// Returns: { route, reason, sanitizedContent? }
 async function classifyWithLLM(userMessage, localApiUrl, localApiKey, localModel) {
   // Keep prompt minimal — local model is on CPU, needs to be fast
   const prompt = `Route this request: "${userMessage.slice(0, 300)}"
@@ -87,7 +88,7 @@ Use openrouter for complex reasoning/research/creative writing/high-stakes. Use 
       body: JSON.stringify({
         model: localModel,
         messages: [{ role: 'user', content: prompt }],
-        max_tokens: 128,
+        max_tokens: 256,
         stream: false
       }),
       signal: controller.signal
@@ -112,6 +113,50 @@ Use openrouter for complex reasoning/research/creative writing/high-stakes. Use 
   }
 }
 
+// Ask local LLM to strip routing instructions from a message
+// Returns the cleaned message text
+async function sanitizeWithLLM(userMessage, localApiUrl, localApiKey, localModel) {
+  const prompt = `This message contains a routing instruction (e.g. "use grok", "use the paid model"). Remove that instruction and return ONLY the actual user request.
+
+Original: "${userMessage.slice(0, 500)}"
+
+Reply with ONLY the cleaned message text, nothing else.`;
+
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), 15000); // 15s max
+
+  try {
+    const response = await fetch(`${localApiUrl}/chat/completions`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${localApiKey}`
+      },
+      body: JSON.stringify({
+        model: localModel,
+        messages: [{ role: 'user', content: prompt }],
+        max_tokens: 512,
+        stream: false
+      }),
+      signal: controller.signal
+    });
+
+    if (!response.ok) {
+      throw new Error(`LLM sanitization failed: HTTP ${response.status}`);
+    }
+
+    const data = await response.json();
+    const content = data.choices?.[0]?.message?.content;
+    if (content) {
+      // Strip any markdown code blocks the model might wrap it in
+      return content.replace(/^```[\s\S]*?\n([\s\S]*?)```$/m, '$1').trim();
+    }
+    throw new Error('Empty sanitization response');
+  } finally {
+    clearTimeout(timeoutId);
+  }
+}
+
 // Send classification request to local model with retry logic
 async function classifyRequest(userMessage, localApiUrl, localApiKey, localModel) {
   const tasksConfig = loadTasks();
@@ -119,7 +164,17 @@ async function classifyRequest(userMessage, localApiUrl, localApiKey, localModel
   // 1. Explicit model request (e.g. "use grok") — highest priority, overrides everything
   const explicitRequestMatch = quickExplicitModelRequest(userMessage, tasksConfig);
   if (explicitRequestMatch) {
-    const sanitized = sanitizeMessage(userMessage);
+    // Use LLM to intelligently strip the routing instruction
+    let sanitized = userMessage;
+    try {
+      console.log(`   → Detected routing instruction, sanitizing with LLM...`);
+      sanitized = await sanitizeWithLLM(userMessage, localApiUrl, localApiKey, localModel);
+      console.log(`   → Sanitized message ready`);
+    } catch (err) {
+      // Fallback to regex if LLM sanitization fails
+      console.error(`   ⚠️ LLM sanitization failed: ${err.message}, using regex fallback`);
+      sanitized = sanitizeMessage(userMessage);
+    }
     return {
       route: 'openrouter',
       reason: `explicit model request: ${explicitRequestMatch}`,
