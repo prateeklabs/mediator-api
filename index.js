@@ -14,6 +14,7 @@ const LOCAL_MODEL = process.env.LOCAL_MODEL || 'qwen/qwen3.6-27b';
 const OPENROUTER_API_KEY = process.env.OPENROUTER_API_KEY;
 const OPENROUTER_BASE_URL = process.env.OPENROUTER_BASE_URL || 'https://openrouter.ai/api/v1';
 const OPENROUTER_MODEL = process.env.OPENROUTER_MODEL || 'x-ai/grok-4.5';
+const CLASSIFIER_MODE = process.env.CLASSIFIER_MODE || 'hybrid';
 
 // Validate required config
 if (!OPENROUTER_API_KEY) {
@@ -62,6 +63,18 @@ app.post('/v1/chat/completions', async (req, res) => {
 
   console.log(`   Route: ${classification.route} (${classification.reason})`);
 
+  // Sanitize user message if classifier detected explicit model request
+  let finalMessages = messages;
+  if (classification.sanitizedContent) {
+    console.log(`   → Sanitized message (stripped routing instruction)`);
+    finalMessages = messages.map(m => {
+      if (m === lastUserMessage) {
+        return { ...m, content: classification.sanitizedContent };
+      }
+      return m;
+    });
+  }
+
   // Step 2: Route to the appropriate backend
   let targetUrl, apiKey, model;
 
@@ -78,8 +91,14 @@ app.post('/v1/chat/completions', async (req, res) => {
   }
 
   try {
+    // Build final request body with sanitized messages if applicable
+    const finalBody = {
+      ...req.body,
+      messages: finalMessages
+    };
+
     const isLocal = classification.route === 'local';
-    const apiResponse = await forwardToApi(targetUrl, apiKey, model, req.body, isLocal);
+    const apiResponse = await forwardToApi(targetUrl, apiKey, model, finalBody, isLocal);
 
     if (stream) {
       res.setHeader('Content-Type', 'text/event-stream');
@@ -100,7 +119,11 @@ app.post('/v1/chat/completions', async (req, res) => {
     if (classification.route === 'openrouter' && LOCAL_API_URL) {
       console.log(`   🔄 Falling back to local model...`);
       try {
-        const fallbackResponse = await forwardToApi(LOCAL_API_URL, LOCAL_API_KEY, LOCAL_MODEL, req.body, true);
+        const fallbackBody = {
+          ...req.body,
+          messages: finalMessages
+        };
+        const fallbackResponse = await forwardToApi(LOCAL_API_URL, LOCAL_API_KEY, LOCAL_MODEL, fallbackBody, true);
 
         if (stream) {
           res.setHeader('Content-Type', 'text/event-stream');
@@ -141,6 +164,7 @@ app.listen(PORT, HOST, () => {
 ║  Local Model: ${String(LOCAL_MODEL).padEnd(21)}║
 ║  OpenRouter: ${String(OPENROUTER_BASE_URL).padEnd(20)}║
 ║  OR Model:   ${String(OPENROUTER_MODEL).padEnd(21)}║
+║  Classifier: ${String(CLASSIFIER_MODE).padEnd(21)}║
 ╚══════════════════════════════════════════╝
   `);
 });

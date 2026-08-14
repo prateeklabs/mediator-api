@@ -1,6 +1,12 @@
 const fs = require('fs');
 const path = require('path');
 
+// Classifier mode: keyword | hybrid | llm
+// keyword = keyword matching only (fast, no LLM call)
+// hybrid  = keyword fast path + LLM fallback for ambiguous requests
+// llm     = always use LLM for classification
+const CLASSIFIER_MODE = process.env.CLASSIFIER_MODE || 'hybrid';
+
 // Load task routing config
 function loadTasks() {
   const tasksPath = path.join(__dirname, 'tasks.json');
@@ -37,6 +43,72 @@ Rules:
 - Do NOT add any text outside the JSON object`;
 }
 
+// Strip routing instructions (e.g. "use grok:", "use a stronger model to...")
+// from the user message before forwarding to the target backend
+function sanitizeMessage(userMessage) {
+  // Patterns derived from explicit_model_request keywords in tasks.json
+  const patterns = [
+    /^(?:use\s+(?:grok|openrouter|a\s+(?:stronger|better|more\s+capable)\s+model|the\s+(?:paid|expensive)\s+model|a\s+smarter\s+model))[:.,!?]\s*/i,
+    /^(?:route\s+to\s+grok)[:.,!?]\s*/i,
+    /^(?:try\s+a\s+smarter\s+model)[:.,!?]\s*/i,
+    /^(?:upgrade\s+(?:the\s+)?model)[:.,!?]\s*/i,
+    /^(?:this\s+is\s+important\s+use\s+grok)[:.,!?]\s*/i,
+    /^(?:i\s+need\s+(?:a\s+)?(?:better\s+answer|a\s+stronger\s+model|a\s+better\s+model))[:.,!?]\s*/i,
+    /^(?:use\s+grok\s+for\s+this)[:.,!?]\s*/i,
+  ];
+
+  let sanitized = userMessage;
+  for (const pattern of patterns) {
+    sanitized = sanitized.replace(pattern, '');
+    if (sanitized !== userMessage) break; // Stop after first match
+  }
+
+  return sanitized.trim();
+}
+
+// Ask local LLM to classify an ambiguous request
+async function classifyWithLLM(userMessage, localApiUrl, localApiKey, localModel) {
+  const prompt = `Classify this user request. Should it be handled by a capable local model or routed to a stronger remote model?
+
+User request: ${userMessage}
+
+Respond ONLY with JSON:
+{"route":"local" or "openrouter","reason":"brief explanation"}
+
+Use "openrouter" for: complex reasoning, research, creative writing, high-stakes tasks, or when the request seems to need more capability.
+Use "local" for: coding, debugging, technical tasks, simple questions, everyday tasks.
+Do NOT add any text outside the JSON object.`;
+
+  const response = await fetch(`${localApiUrl}/chat/completions`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${localApiKey}`
+    },
+    body: JSON.stringify({
+      model: localModel,
+      messages: [{ role: 'user', content: prompt }],
+      max_tokens: 64,
+      stream: false
+    })
+  });
+
+  if (!response.ok) {
+    throw new Error(`LLM classification failed: HTTP ${response.status}`);
+  }
+
+  const data = await response.json();
+  const content = data.choices?.[0]?.message?.content || '{}';
+
+  // Extract JSON from response (handle markdown code blocks)
+  const jsonMatch = content.match(/\{[\s\S]*\}/);
+  if (!jsonMatch) {
+    throw new Error(`Invalid LLM classification response: ${content.slice(0, 100)}`);
+  }
+
+  return JSON.parse(jsonMatch[0]);
+}
+
 // Send classification request to local model with retry logic
 async function classifyRequest(userMessage, localApiUrl, localApiKey, localModel) {
   const tasksConfig = loadTasks();
@@ -44,10 +116,12 @@ async function classifyRequest(userMessage, localApiUrl, localApiKey, localModel
   // 1. Explicit model request (e.g. "use grok") — highest priority, overrides everything
   const explicitRequestMatch = quickExplicitModelRequest(userMessage, tasksConfig);
   if (explicitRequestMatch) {
+    const sanitized = sanitizeMessage(userMessage);
     return {
       route: 'openrouter',
       reason: `explicit model request: ${explicitRequestMatch}`,
-      category: explicitRequestMatch
+      category: explicitRequestMatch,
+      sanitizedContent: sanitized
     };
   }
 
@@ -69,6 +143,22 @@ async function classifyRequest(userMessage, localApiUrl, localApiKey, localModel
       reason: `keyword match: ${keywordMatch}`,
       category: keywordMatch
     };
+  }
+
+  // 4. No keyword match — use LLM classification if enabled
+  if (CLASSIFIER_MODE === 'hybrid' || CLASSIFIER_MODE === 'llm') {
+    try {
+      console.log(`   → Keyword match inconclusive, asking local LLM to classify...`);
+      const llmResult = await classifyWithLLM(userMessage, localApiUrl, localApiKey, localModel);
+      console.log(`   → LLM classified as: ${llmResult.route} (${llmResult.reason})`);
+      return {
+        route: llmResult.route || 'local',
+        reason: `LLM classification: ${llmResult.reason || 'unknown'}`,
+        category: null
+      };
+    } catch (err) {
+      console.error(`   ⚠️ LLM classification failed: ${err.message}, defaulting to local`);
+    }
   }
 
   // Default to local
