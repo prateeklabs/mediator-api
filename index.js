@@ -447,9 +447,9 @@ app.post('/v1/chat/completions', async (req, res) => {
 // ── Start server ────────────────────────────────────────────────────────────
 const HOST = '0.0.0.0';
 app.listen(PORT, HOST, () => {
-  const localModel = config.get('localModel') || '(unset)';
-  const openrouterModel = config.get('openrouterModel') || '(unset)';
-  const classifierMode = config.get('classifierMode') || '(unset)';
+  const localModel = config.get('localModel') || 'qwen/qwen3.8-27b';
+  const openrouterModel = config.get('openrouterModel') || 'x-ai/grok-4.5';
+  const classifierMode = config.get('classifierMode') || 'keyword';
   console.log(`
 ╔══════════════════════════════════════════════════╗
 ║          Mediator API is running                 ║
