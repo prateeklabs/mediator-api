@@ -88,7 +88,7 @@ Use openrouter for complex reasoning/research/creative writing/high-stakes. Use 
       body: JSON.stringify({
         model: localModel,
         messages: [{ role: 'user', content: prompt }],
-        max_tokens: 256,
+        max_tokens: 512,
         stream: false
       }),
       signal: controller.signal
@@ -184,24 +184,29 @@ async function classifyRequest(userMessage, localApiUrl, localApiKey, localModel
     };
   }
 
-  // 2. always_local — force local for simple/technical tasks
-  const alwaysLocalMatch = quickAlwaysLocalMatch(userMessage, tasksConfig);
-  if (alwaysLocalMatch) {
-    return {
-      route: 'local',
-      reason: `always_local match: ${alwaysLocalMatch}`,
-      category: null
-    };
+  // 2. always_local — force local for simple/technical tasks (skipped in llm mode)
+  if (MODE !== 'llm') {
+    const alwaysLocalMatch = quickAlwaysLocalMatch(userMessage, tasksConfig);
+    if (alwaysLocalMatch) {
+      return {
+        route: 'local',
+        reason: `always_local match: ${alwaysLocalMatch}`,
+        category: null
+      };
+    }
   }
 
   // 3. OpenRouter category keywords (complex reasoning, research, etc.)
-  const keywordMatch = quickKeywordMatch(userMessage, tasksConfig);
-  if (keywordMatch) {
-    return {
-      route: 'openrouter',
-      reason: `keyword match: ${keywordMatch}`,
-      category: keywordMatch
-    };
+  //    Skipped in llm mode — the LLM decides routing instead.
+  if (MODE !== 'llm') {
+    const keywordMatch = quickKeywordMatch(userMessage, tasksConfig);
+    if (keywordMatch) {
+      return {
+        route: 'openrouter',
+        reason: `keyword match: ${keywordMatch}`,
+        category: keywordMatch
+      };
+    }
   }
 
   // 4. No keyword match — use LLM classification if enabled
