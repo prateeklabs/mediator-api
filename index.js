@@ -1,4 +1,28 @@
 require('dotenv').config();
+
+// ── Single source of truth for dashboard auth ───────────────────────────────
+// Credentials live in /root/.hermes/.env (HERMES_DASHBOARD_BASIC_AUTH_*) —
+// the same file the Hermes dashboard uses. Mounted read-only as
+// /hermes-auth.env. One rotation there updates BOTH dashboards.
+// (DASH_AUTH_USERNAME / DASH_AUTH_PASSWORD in the app .env still work as an
+// explicit override, e.g. for dev containers.)
+try {
+  const fs = require('fs');
+  if (!process.env.DASH_AUTH_USERNAME || !process.env.DASH_AUTH_PASSWORD) {
+    const hermesEnv = fs.readFileSync('/hermes-auth.env', 'utf8');
+    const get = (k) => {
+      const m = hermesEnv.match(new RegExp(`^${k}=([^\\r\\n]*)`, 'm'));
+      return m ? m[1].trim() : '';
+    };
+    const u = get('HERMES_DASHBOARD_BASIC_AUTH_USERNAME');
+    const p = get('HERMES_DASHBOARD_BASIC_AUTH_PASSWORD');
+    if (u) process.env.DASH_AUTH_USERNAME = u;
+    if (p) process.env.DASH_AUTH_PASSWORD = p;
+  }
+} catch (err) {
+  console.warn(`⚠ Could not load shared hermes auth env (${err.message}) — falling back to DASH_AUTH_* in app .env`);
+}
+
 const express = require('express');
 const { timingSafeEqual, createHash } = require('crypto');
 const { classifyRequest } = require('./classifier');

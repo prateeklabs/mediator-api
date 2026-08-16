@@ -9,6 +9,9 @@ services:
     volumes:
       # Persist runtime config overrides (dashboard changes) across container recreation
       - mediator-config:/app/data
+      # Shared dashboard credentials (read-only) — same file the Hermes dashboard uses,
+      # so one password rotation covers both dashboards.
+      - /root/.hermes/.env:/hermes-auth.env:ro
     healthcheck:
       test: ["CMD", "wget", "-qO-", "http://localhost:3000/health"]
       interval: 30s
