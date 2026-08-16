@@ -7,7 +7,7 @@ COPY package.json package-lock.json ./
 RUN npm ci --production
 
 # Copy application code
-COPY classifier.js index.js router.js tasks.json ./
+COPY classifier.js index.js router.js config-store.js tasks.json ./
 
 # Expose port
 EXPOSE 3000

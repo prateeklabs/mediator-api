@@ -158,7 +158,8 @@ Reply with ONLY the cleaned message text, nothing else.`;
 }
 
 // Send classification request to local model with retry logic
-async function classifyRequest(userMessage, localApiUrl, localApiKey, localModel) {
+async function classifyRequest(userMessage, localApiUrl, localApiKey, localModel, classifierMode) {
+  const MODE = classifierMode || process.env.CLASSIFIER_MODE || 'keyword';
   const tasksConfig = loadTasks();
 
   // 1. Explicit model request (e.g. "use grok") — highest priority, overrides everything
@@ -204,7 +205,7 @@ async function classifyRequest(userMessage, localApiUrl, localApiKey, localModel
   }
 
   // 4. No keyword match — use LLM classification if enabled
-  if (CLASSIFIER_MODE === 'hybrid' || CLASSIFIER_MODE === 'llm') {
+  if (MODE === 'hybrid' || MODE === 'llm') {
     try {
       console.log(`   → Keyword match inconclusive, asking local LLM to classify...`);
       const llmResult = await classifyWithLLM(userMessage, localApiUrl, localApiKey, localModel);
