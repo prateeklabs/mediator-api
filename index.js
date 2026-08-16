@@ -2,25 +2,30 @@ require('dotenv').config();
 
 // ── Single source of truth for dashboard auth ───────────────────────────────
 // Credentials live in /root/.hermes/.env (HERMES_DASHBOARD_BASIC_AUTH_*) —
-// the same file the Hermes dashboard uses. Mounted read-only as
-// /hermes-auth.env. One rotation there updates BOTH dashboards.
+// the same file the Hermes dashboard uses, mounted read-only as /hermes-auth.env.
+// One rotation there updates BOTH dashboards (re-read on every request, so a
+// new password takes effect immediately — no container restart needed).
 // (DASH_AUTH_USERNAME / DASH_AUTH_PASSWORD in the app .env still work as an
-// explicit override, e.g. for dev containers.)
-try {
-  const fs = require('fs');
-  if (!process.env.DASH_AUTH_USERNAME || !process.env.DASH_AUTH_PASSWORD) {
-    const hermesEnv = fs.readFileSync('/hermes-auth.env', 'utf8');
+// explicit override, e.g. for dev containers without the hermes file.)
+const fs = require('fs');
+const SHARED_AUTH_ENV = '/hermes-auth.env';
+
+function sharedCreds() {
+  // Explicit app-env override wins (dev/standalone containers)
+  if (process.env.DASH_AUTH_USERNAME && process.env.DASH_AUTH_PASSWORD) {
+    return { user: process.env.DASH_AUTH_USERNAME, pass: process.env.DASH_AUTH_PASSWORD };
+  }
+  try {
+    const raw = fs.readFileSync(SHARED_AUTH_ENV, 'utf8');
     const get = (k) => {
-      const m = hermesEnv.match(new RegExp(`^${k}=([^\\r\\n]*)`, 'm'));
+      const m = raw.match(new RegExp(`^${k}=([^\\r\\n]*)`, 'm'));
       return m ? m[1].trim() : '';
     };
-    const u = get('HERMES_DASHBOARD_BASIC_AUTH_USERNAME');
-    const p = get('HERMES_DASHBOARD_BASIC_AUTH_PASSWORD');
-    if (u) process.env.DASH_AUTH_USERNAME = u;
-    if (p) process.env.DASH_AUTH_PASSWORD = p;
-  }
-} catch (err) {
-  console.warn(`⚠ Could not load shared hermes auth env (${err.message}) — falling back to DASH_AUTH_* in app .env`);
+    const user = get('HERMES_DASHBOARD_BASIC_AUTH_USERNAME');
+    const pass = get('HERMES_DASHBOARD_BASIC_AUTH_PASSWORD');
+    if (user && pass) return { user, pass };
+  } catch (_) { /* fall through */ }
+  return { user: '', pass: '' };
 }
 
 const express = require('express');
@@ -44,11 +49,11 @@ if (!OPENROUTER_API_KEY) {
   process.exit(1);
 }
 
-// ── Admin auth — HTTP Basic (same credentials as hermes.buildwithprateek.com) ──
-const AUTH_USER = process.env.DASH_AUTH_USERNAME || '';
-const AUTH_PASS = process.env.DASH_AUTH_PASSWORD || '';
-
+// ── Admin auth — HTTP Basic (shared credentials with hermes.buildwithprateek.com) ──
+// Credentials are resolved per-request via sharedCreds() so a password
+// rotation in /root/.hermes/.env takes effect immediately (no restart).
 function adminAuthorized(req) {
+  const { user: AUTH_USER, pass: AUTH_PASS } = sharedCreds();
   if (!AUTH_USER || !AUTH_PASS) return false;
   const header = req.headers['authorization'] || '';
   const m = header.match(/^Basic\s+([A-Za-z0-9+/=]+)/i);
@@ -64,7 +69,8 @@ function adminAuthorized(req) {
 }
 
 function requireAuth(req, res, next) {
-  if (!AUTH_USER || !AUTH_PASS) {
+  const { user, pass } = sharedCreds();
+  if (!user || !pass) {
     return res.status(503).json({ ok: false, error: 'Dashboard auth not configured (set DASH_AUTH_USERNAME / DASH_AUTH_PASSWORD)' });
   }
   if (adminAuthorized(req)) return next();
@@ -474,6 +480,7 @@ app.listen(PORT, HOST, () => {
   const localModel = config.get('localModel') || 'qwen/qwen3.8-27b';
   const openrouterModel = config.get('openrouterModel') || 'x-ai/grok-4.5';
   const classifierMode = config.get('classifierMode') || 'keyword';
+  const _auth = sharedCreds();
   console.log(`
 ╔══════════════════════════════════════════════════╗
 ║          Mediator API is running                 ║
@@ -484,7 +491,7 @@ app.listen(PORT, HOST, () => {
 ║  OpenRouter:    ${String(config.get('openrouterBaseUrl') || '(unset)').padEnd(32)}║
 ║  OR Model:      ${String(openrouterModel).padEnd(32)}║
 ║  Classifier:    ${String(classifierMode).padEnd(32)}║
-║  Config UI:     /config ${AUTH_USER && AUTH_PASS ? '(basic auth ✓)' : '(⚠ no DASH_AUTH_* — admin API disabled)'}
+║  Config UI:     /config ${_auth.user && _auth.pass ? '(basic auth ✓ — shared with hermes dashboard)' : '(⚠ no shared creds — admin API disabled)'}
 ╚══════════════════════════════════════════════════╝
   `);
 });
