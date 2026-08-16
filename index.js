@@ -372,9 +372,13 @@ app.post('/v1/chat/completions', async (req, res) => {
   }
 
   try {
+    // Force backend stream mode to match our client-facing mode —
+    // LM Studio defaults to NON-streaming, so without this a client that
+    // omits "stream" gets JSON back and streamToSSE writes nothing.
     const finalBody = {
       ...req.body,
-      messages: finalMessages
+      messages: finalMessages,
+      stream: !!stream
     };
 
     const isLocal = classification.route === 'local';
@@ -401,7 +405,8 @@ app.post('/v1/chat/completions', async (req, res) => {
       try {
         const fallbackBody = {
           ...req.body,
-          messages: finalMessages
+          messages: finalMessages,
+          stream: !!stream
         };
         const fallbackResponse = await forwardToApi(localApiUrl, localApiKey, localModel, fallbackBody, true);
 
