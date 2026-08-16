@@ -230,7 +230,7 @@ async function loadConfig() {
       document.getElementById('i-' + f).value = field.value;
       document.getElementById('v-' + f).textContent = field.overridden
         ? 'runtime override — env default: ' + (field.hasEnvDefault ? 'yes' : 'none')
-        : (field.hasEnvDefault ? 'from env (.env)' : 'unset');
+        : (field.hasEnvDefault ? 'from env (.env)' : (field.codeDefault ? 'code default' : 'unset'));
       document.getElementById('b-' + f).textContent = field.overridden ? 'override' : (field.hasEnvDefault ? 'env' : 'unset');
       document.getElementById('b-' + f).className = 'badge' + (field.overridden ? ' over' : '');
     }

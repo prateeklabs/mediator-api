@@ -10,12 +10,12 @@ const CONFIG_FILE = path.join(DATA_DIR, 'config.json');
 // type: string | select
 // secret: never returned to clients (only "set"/"unset")
 const SCHEMA = {
-  localModel:        { label: 'Local model (LM Studio)',        type: 'string',  envKey: 'LOCAL_MODEL' },
-  localApiUrl:       { label: 'Local API URL',                  type: 'string',  envKey: 'LOCAL_API_URL' },
-  openrouterModel:   { label: 'Paid model (OpenRouter)',        type: 'string',  envKey: 'OPENROUTER_MODEL' },
-  openrouterBaseUrl: { label: 'OpenRouter base URL',            type: 'string',  envKey: 'OPENROUTER_BASE_URL' },
-  classifierMode:    { label: 'Classifier mode',                type: 'select',  envKey: 'CLASSIFIER_MODE', options: ['keyword', 'hybrid', 'llm'] },
-  fetchTimeoutMs:    { label: 'Fetch timeout (ms)',             type: 'number',  envKey: 'FETCH_TIMEOUT_MS' }
+  localModel:        { label: 'Local model (LM Studio)',        type: 'string',  envKey: 'LOCAL_MODEL', default: undefined },
+  localApiUrl:       { label: 'Local API URL',                  type: 'string',  envKey: 'LOCAL_API_URL', default: 'http://localhost:1234/v1' },
+  openrouterModel:   { label: 'Paid model (OpenRouter)',        type: 'string',  envKey: 'OPENROUTER_MODEL', default: undefined },
+  openrouterBaseUrl: { label: 'OpenRouter base URL',            type: 'string',  envKey: 'OPENROUTER_BASE_URL', default: 'https://openrouter.ai/api/v1' },
+  classifierMode:    { label: 'Classifier mode',                type: 'select',  envKey: 'CLASSIFIER_MODE', options: ['keyword', 'hybrid', 'llm'], default: 'keyword' },
+  fetchTimeoutMs:    { label: 'Fetch timeout (ms)',             type: 'number',  envKey: 'FETCH_TIMEOUT_MS', default: '120000' }
 };
 
 const SECRET_KEYS = ['OPENROUTER_API_KEY', 'LOCAL_API_KEY'];
@@ -96,14 +96,15 @@ function resetAll() {
 function publicView() {
   const view = {};
   for (const [field, meta] of Object.entries(SCHEMA)) {
-    const value = get(field);
+    const value = get(field) ?? meta.default ?? '';
     const envVal = envValue(meta.envKey);
     const overridden = overrides[field] !== undefined;
     view[field] = {
       label: meta.label,
       type: meta.type,
       options: meta.options || null,
-      value: value ?? '',
+      value,
+      codeDefault: meta.default ?? null,
       hasEnvDefault: envVal !== undefined && envVal !== '',
       overridden,
       secret: false
