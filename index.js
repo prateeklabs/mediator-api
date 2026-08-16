@@ -1,6 +1,6 @@
 require('dotenv').config();
 const express = require('express');
-const crypto = require('crypto');
+const { timingSafeEqual, createHash } = require('crypto');
 const { classifyRequest } = require('./classifier');
 const { forwardToApi, streamToSSE, passthroughJson } = require('./router');
 const config = require('./config-store');
@@ -20,14 +20,35 @@ if (!OPENROUTER_API_KEY) {
   process.exit(1);
 }
 
-// ── Admin auth ──────────────────────────────────────────────────────────────
+// ── Admin auth — HTTP Basic (same credentials as hermes.buildwithprateek.com) ──
+const AUTH_USER = process.env.DASH_AUTH_USERNAME || '';
+const AUTH_PASS = process.env.DASH_AUTH_PASSWORD || '';
+
 function adminAuthorized(req) {
-  const header = req.headers['x-admin-token'] || '';
-  if (!ADMIN_TOKEN) return false;
-  if (header === ADMIN_TOKEN) return true;
-  // Also accept ?token= for browser dashboard (cookie-less)
-  if (req.query && req.query.token === ADMIN_TOKEN) return true;
-  return false;
+  if (!AUTH_USER || !AUTH_PASS) return false;
+  const header = req.headers['authorization'] || '';
+  const m = header.match(/^Basic\s+([A-Za-z0-9+/=]+)/i);
+  if (!m) return false;
+  let user = '', pass = '';
+  try {
+    [user, pass] = Buffer.from(m[1], 'base64').toString('utf8').split(':', 2);
+  } catch (_) { return false; }
+  const h = (s) => createHash('sha256').update(String(s)).digest('hex');
+  if (user.length !== AUTH_USER.length || pass.length !== AUTH_PASS.length) return false;
+  return timingSafeEqual(Buffer.from(h(user)), Buffer.from(h(AUTH_USER)))
+    && timingSafeEqual(Buffer.from(h(pass)), Buffer.from(h(AUTH_PASS)));
+}
+
+function requireAuth(req, res, next) {
+  if (!AUTH_USER || !AUTH_PASS) {
+    return res.status(503).json({ ok: false, error: 'Dashboard auth not configured (set DASH_AUTH_USERNAME / DASH_AUTH_PASSWORD)' });
+  }
+  if (adminAuthorized(req)) return next();
+  res.setHeader('WWW-Authenticate', 'Basic realm="Mediator Config", charset="UTF-8"');
+  if (req.accepts('html')) {
+    return res.status(401).type('html').send('<h1>401 — Authentication required</h1><p>Enter the same credentials you use on <code>hermes.buildwithprateek.com</code>.</p>');
+  }
+  return res.status(401).json({ ok: false, error: 'Authentication required (username + password)' });
 }
 
 // ── Health check ────────────────────────────────────────────────────────────
@@ -36,13 +57,11 @@ app.get('/health', (_req, res) => {
 });
 
 // ── Admin API ───────────────────────────────────────────────────────────────
-app.get('/api/admin/config', (req, res) => {
-  if (!adminAuthorized(req)) return res.status(401).json({ error: 'Unauthorized' });
+app.get('/api/admin/config', requireAuth, (req, res) => {
   res.json({ config: config.publicView(), version: process.env.npm_package_version || '1.x' });
 });
 
-app.post('/api/admin/config', (req, res) => {
-  if (!adminAuthorized(req)) return res.status(401).json({ error: 'Unauthorized' });
+app.post('/api/admin/config', requireAuth, (req, res) => {
   const { field, value } = req.body || {};
   if (!field || value === undefined) {
     return res.status(400).json({ error: 'body must include { field, value }' });
@@ -55,8 +74,7 @@ app.post('/api/admin/config', (req, res) => {
   }
 });
 
-app.post('/api/admin/config/reset', (req, res) => {
-  if (!adminAuthorized(req)) return res.status(401).json({ error: 'Unauthorized' });
+app.post('/api/admin/config/reset', requireAuth, (req, res) => {
   const { field } = req.body || {};
   if (field) {
     try {
@@ -71,8 +89,7 @@ app.post('/api/admin/config/reset', (req, res) => {
   }
 });
 
-app.get('/api/admin/models/local', async (req, res) => {
-  if (!adminAuthorized(req)) return res.status(401).json({ error: 'Unauthorized' });
+app.get('/api/admin/models/local', requireAuth, async (req, res) => {
   const models = await config.listLocalModels();
   res.json({ models, source: config.get('localApiUrl') });
 });
@@ -114,12 +131,8 @@ const DASHBOARD_HTML = `<!doctype html>
   <div class="sub">api.buildwithprateek.com — live routing config (changes apply immediately, persist across restarts)</div>
 
   <div class="card" id="authCard">
-    <label>Admin token</label>
-    <div class="token-box">
-      <input type="password" id="token" placeholder="enter admin token" autocomplete="off">
-      <button onclick="loadConfig()">Connect</button>
-    </div>
-    <div id="authMsg" class="val"></div>
+    <label>Authentication</label>
+    <div id="authMsg" class="val">…</div>
   </div>
 
   <div id="configArea" class="hidden">
@@ -192,16 +205,10 @@ const DASHBOARD_HTML = `<!doctype html>
 </div>
 
 <script>
-const TOKEN = localStorage.getItem('mediatorAdminToken') || '';
-const tokenInput = document.getElementById('token');
-tokenInput.value = TOKEN;
-if (TOKEN) loadConfig();
-
-function hdr() { return { 'Content-Type': 'application/json', 'X-Admin-Token': tokenInput.value }; }
+function hdr() { return { 'Content-Type': 'application/json' }; }
 function esc(s) { return String(s ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
 
 async function loadConfig() {
-  localStorage.setItem('mediatorAdminToken', tokenInput.value);
   const msg = document.getElementById('authMsg');
   try {
     const r = await fetch('/api/admin/config', { headers: hdr() });
@@ -242,7 +249,7 @@ async function loadConfig() {
     const ork = c.openrouterapikey;
     document.getElementById('v-orkey').textContent = ork.set ? '✓ set (value hidden)' : '✗ not set';
   } catch (e) {
-    msg.innerHTML = '<span class="err">✗ ' + esc(e.message) + (e.message.includes('401') ? ' — check token' : '') + '</span>';
+    msg.innerHTML = '<span class="err">✗ ' + esc(e.message) + (e.message.includes('401') ? ' — wrong credentials' : '') + '</span>';
   }
 }
 
@@ -285,6 +292,8 @@ async function resetAll() {
   } catch (e) { flash('✗ ' + e.message); }
 }
 
+loadConfig();
+
 let flashTimer;
 function flash(msg) {
   const el = document.querySelector('.footer');
@@ -296,8 +305,7 @@ function flash(msg) {
 </script>
 </body></html>`;
 
-app.get('/config', (req, res) => {
-  // Public page (dashboard UI). Sensitive values still require admin token.
+app.get('/config', requireAuth, (req, res) => {
   res.type('html').send(DASHBOARD_HTML);
 });
 
@@ -452,7 +460,7 @@ app.listen(PORT, HOST, () => {
 ║  OpenRouter:    ${String(config.get('openrouterBaseUrl') || '(unset)').padEnd(32)}║
 ║  OR Model:      ${String(openrouterModel).padEnd(32)}║
 ║  Classifier:    ${String(classifierMode).padEnd(32)}║
-║  Config UI:     /config ${ADMIN_TOKEN ? '(admin auth ✓)' : '(⚠ no ADMIN_TOKEN — admin API disabled)'}
+║  Config UI:     /config ${AUTH_USER && AUTH_PASS ? '(basic auth ✓)' : '(⚠ no DASH_AUTH_* — admin API disabled)'}
 ╚══════════════════════════════════════════════════╝
   `);
 });
